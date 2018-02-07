@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,12 @@ import (
 const bits = 128
 
 func main() {
+	// remember this is a pointer
+	var serv = flag.Bool("l", false, "enable server mode (listen)")
+	// var verbose = flag.Bool("v", false, "verbose mode")
+	flag.Parse()
+	fmt.Println(flag.Args())
+	// eventually factor out to debug flag
 	fmt.Println("starting...")
 	//CTRMode()
 	// define our prime for dhke
@@ -33,11 +40,33 @@ func main() {
 		    // debug
 		    fmt.Printf("debug: %v %v %v %v\n", myPrime, ourPrime, ourMod, secKey.BitLen())
 	*/
+	if *serv {
+		server()
+	} else {
+		client()
+	}
+}
+
+func client() {
 	tcpAddr, err := net.ResolveTCPAddr("tcp", "localhost:12345")
 	handle(err)
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	handle(err)
 	defer conn.Close()
+	base(conn)
+}
+
+func server() {
+	listener, err := net.Listen("tcp", "localhost:12345")
+	handle(err)
+	defer listener.Close()
+	conn, err := listener.Accept()
+	handle(err)
+	defer conn.Close()
+	base(conn)
+}
+
+func base(conn net.Conn) {
 	connbuf := bufio.NewReader(conn)
 	connwr := bufio.NewWriter(conn)
 	psRead := bufio.NewReader(os.Stdin)
