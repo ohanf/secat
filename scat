@@ -1,0 +1,80 @@
+#!/bin/bash
+keyStrength=128
+myPrime=$(openssl prime -generate -bits $keyStrength)
+
+function log2 {
+    local r=-1
+    local v=$1
+    while (( $v )); do
+        v=$[$v>>1]
+        r=$[$r+1]
+    done
+    echo $r
+}
+
+# r, h, x
+square_mult () {
+    local r=$1
+    local t=$(log2 $2)
+    t=$(($t-1))
+    #echo "$t"
+    for (( i=$t-1 ; $i > -1; i -= 1 )); do
+        r=$[($r**2)%$3]
+        v=$[($2 >> $i) & 1]
+        if [ "$v" -eq "1" ]; then
+            r=$[($r*$1)%$3]
+        fi
+        #echo "$i $[($2>>$i)&1] $r"
+    done
+    echo "$r"
+}
+
+#square_mult 31 39 773
+
+client () {
+    ourPrime=$(openssl prime -generate -bits $keyStrength)
+    ourMod=$(openssl prime -generate -bits $keyStrength)
+    secKey=$(square_mult $ourPrime $myPrime $ourMod)
+    echo "secKey: $secKey"
+    nc $1 $2 -v
+}
+
+server () {
+    while read line
+    do
+        if [[ "$line" = "keys"* ]]
+        then
+            echo "matched special: $line"
+        elif [ -z ${key+x} ]; then
+            echo "nokey: $line"
+        else
+            decrypt $key $line
+        fi
+    done < <(nc -l -v -p $1)
+    #ourPrime=receivePrime
+    echo 2
+}
+
+encrypt () {
+    echo $2 | openssl enc -aes-256-cbc -a -pass "pass:$1"
+}
+
+decrypt () {
+    echo $2 | openssl enc -aes-256-cbc -a -d -pass "pass:$1"
+}
+
+#echo 'encrypt'
+#enc="$(encrypt "passwordisbob" "test123")"
+#echo "decrypt"
+#decrypt "passwordisbob" $enc
+
+if [ "$1" = "server" ]; then
+    echo 'starting server...'
+    server $2;
+elif [ "$1" = "client" ]; then
+    echo 'starting client...'
+    client $2 $3;
+else
+    echo "invalid type"
+fi
+
