@@ -21,48 +21,68 @@ const bits = 128
 func main() {
 	// remember this is a pointer
 	var serv = flag.Bool("l", false, "enable server mode (listen)")
-	// var verbose = flag.Bool("v", false, "verbose mode")
+	var verbose = flag.Bool("v", false, "verbose mode")
+	var udp = flag.Bool("u", false, "use UDP instead of TCP")
 	flag.Parse()
-	fmt.Println(flag.Args())
-	// eventually factor out to debug flag
-	fmt.Println("starting...")
-	//CTRMode()
-	// define our prime for dhke
-	/*
-		    myPrime, err := rand.Prime(rand.Reader, bits)
-			//handle(err)
-			// get the public data to send to server
-		    ourPrime, ourMod := genDH()
-		    // compute the secret key for use with aes
-		    secKey := big.NewInt(0)
-		    secKey.Exp(ourPrime, myPrime, ourMod)
-		    // we will want to call secKey.Bytes for use as AES key later
-		    // debug
-		    fmt.Printf("debug: %v %v %v %v\n", myPrime, ourPrime, ourMod, secKey.BitLen())
-	*/
+	args := flag.Args()
+	/* end argument parsing */
 	if *serv {
-		server()
+		server(args, *udp, *verbose)
 	} else {
-		client()
+		client(args, *udp, *verbose)
 	}
 }
 
-func client() {
-	tcpAddr, err := net.ResolveTCPAddr("tcp", "localhost:12345")
-	handle(err)
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+func client(args []string, udp, vb bool) {
+	if len(args) < 2 {
+		fmt.Printf("Error: No ports specified for connection\n")
+		os.Exit(1)
+	}
+	// force IPv4 for now
+	var proto string
+	if udp {
+		proto = "udp4"
+	} else {
+		proto = "tcp4"
+	}
+	addr := fmt.Sprintf("%s:%s", args[0], args[1])
+	conn, err := net.Dial(proto, addr)
 	handle(err)
 	defer conn.Close()
+	if vb {
+		fmt.Println("starting client")
+	}
 	base(conn)
 }
 
-func server() {
-	listener, err := net.Listen("tcp", "localhost:12345")
-	handle(err)
-	defer listener.Close()
-	conn, err := listener.Accept()
-	handle(err)
+func server(args []string, udp, vb bool) {
+	// maybe support random port generation someday
+	if len(args) < 1 {
+		fmt.Printf("Error: No listen port specified\n")
+		os.Exit(1)
+	}
+	// going to stick with IPv4 for now
+	var proto string
+	addr := fmt.Sprintf("localhost:%s", args[0])
+	var conn net.Conn
+	if udp {
+		proto = "udp4"
+		uaddr, err := net.ResolveUDPAddr(proto, addr)
+		handle(err)
+		conn, err = net.ListenUDP(proto, uaddr)
+		handle(err)
+	} else {
+		proto = "tcp4"
+		listener, err := net.Listen(proto, addr)
+		handle(err)
+		defer listener.Close()
+		conn, err = listener.Accept()
+		handle(err)
+	}
 	defer conn.Close()
+	if vb {
+		fmt.Println("starting server")
+	}
 	base(conn)
 }
 
@@ -96,6 +116,21 @@ func base(conn net.Conn) {
 	}()
 	// ghetto block for connection to end
 	<-kill
+}
+
+func cryptoSetup() {
+	// define our prime for dhke
+	myPrime, err := rand.Prime(rand.Reader, bits)
+	handle(err)
+	// get the public data to send to server
+	ourPrime, ourMod := genDH()
+	// compute the secret key for use with aes
+	secKey := big.NewInt(0)
+	secKey.Exp(ourPrime, myPrime, ourMod)
+	// we will want to call secKey.Bytes for use as AES key later
+	// debug
+	fmt.Printf("debug: %v %v %v %v\n", myPrime, ourPrime, ourMod, secKey.BitLen())
+
 }
 
 // CTRMode implements the counter mode for AES encryption/decryption
