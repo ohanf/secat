@@ -64,33 +64,33 @@ func server(args []string, udp, vb bool) {
 	// going to stick with IPv4 for now
 	var proto string
 	addr := fmt.Sprintf("localhost:%s", args[0])
-	var conn net.Conn
 	if udp {
 		proto = "udp4"
 		uaddr, err := net.ResolveUDPAddr(proto, addr)
 		handle(err)
-		conn, err = net.ListenUDP(proto, uaddr)
+		conn, err := net.ListenUDP(proto, uaddr)
 		handle(err)
+		defer conn.Close()
+		udpServer(*conn)
 	} else {
 		proto = "tcp4"
 		listener, err := net.Listen(proto, addr)
 		handle(err)
 		defer listener.Close()
-		conn, err = listener.Accept()
+		conn, err := listener.Accept()
 		handle(err)
+		defer conn.Close()
+		base(conn)
 	}
-	defer conn.Close()
-	if vb {
-		fmt.Println("starting server")
-	}
-	base(conn)
 }
 
+// base works for TCP client and server, as well as UDP client
 func base(conn net.Conn) {
 	connbuf := bufio.NewReader(conn)
 	connwr := bufio.NewWriter(conn)
 	psRead := bufio.NewReader(os.Stdin)
 	psWrite := bufio.NewWriter(os.Stdout)
+	// anonymous routine for sending data
 	go func() {
 		for {
 			txt, err := psRead.ReadString('\n')
@@ -102,7 +102,7 @@ func base(conn net.Conn) {
 	}()
 
 	kill := make(chan bool)
-
+	// anonymous routine for reading data
 	go func() {
 		for {
 			// can also use ReadSlice to get a []byte
@@ -116,6 +116,33 @@ func base(conn net.Conn) {
 	}()
 	// ghetto block for connection to end
 	<-kill
+}
+
+// udpServer fufills the special requirements of UDP connectionlessness
+func udpServer(conn net.UDPConn) {
+	psRead := bufio.NewReader(os.Stdin)
+	psWrite := bufio.NewWriter(os.Stdout)
+	haveClient := false
+	// start our reader
+	for {
+		b := make([]byte, 1024)
+		_, c, e := conn.ReadFromUDP(b)
+		// send the address read from to the send routine
+		handle(e)
+		psWrite.WriteString(string(b))
+		psWrite.Flush()
+		// run once, start writting routine
+		if !haveClient {
+			go func(cl *net.UDPAddr) {
+				for {
+					txt, err := psRead.ReadString('\n')
+					handle(err)
+					conn.WriteMsgUDP([]byte(txt), nil, c)
+				}
+			}(c)
+			haveClient = true
+		}
+	}
 }
 
 func cryptoSetup() {
