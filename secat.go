@@ -23,18 +23,19 @@ func main() {
 	var serv = flag.Bool("l", false, "enable server mode (listen)")
 	var verbose = flag.Bool("v", false, "verbose mode")
 	var udp = flag.Bool("u", false, "use UDP instead of TCP")
+	var crypto = flag.Bool("c", false, "enable encryption")
 	flag.Parse()
 	args := flag.Args()
 	/* end argument parsing */
 	if *serv {
-		server(args, *udp, *verbose)
+		server(args, *udp, *crypto, *verbose)
 	} else {
-		client(args, *udp, *verbose)
+		client(args, *udp, *crypto, *verbose)
 	}
 }
 
 // client builds the proper connection type and passes it to the base routine
-func client(args []string, udp, vb bool) {
+func client(args []string, udp, crypto, vb bool) {
 	if len(args) < 2 {
 		fmt.Printf("Error: No ports specified for connection\n")
 		os.Exit(1)
@@ -53,12 +54,12 @@ func client(args []string, udp, vb bool) {
 	if vb {
 		fmt.Println("starting client")
 	}
-	base(conn)
+	base(conn, crypto)
 }
 
 // server builds whichever protocol server we want
 // then passes to the proper handler
-func server(args []string, udp, vb bool) {
+func server(args []string, udp, crypto, vb bool) {
 	// maybe support random port generation someday
 	if len(args) < 1 {
 		fmt.Printf("Error: No listen port specified\n")
@@ -66,7 +67,7 @@ func server(args []string, udp, vb bool) {
 	}
 	// going to stick with IPv4 for now
 	var proto string
-	addr := fmt.Sprintf("localhost:%s", args[0])
+	addr := fmt.Sprintf(":%s", args[0])
 	if udp {
 		proto = "udp4"
 		uaddr, err := net.ResolveUDPAddr(proto, addr)
@@ -74,7 +75,7 @@ func server(args []string, udp, vb bool) {
 		conn, err := net.ListenUDP(proto, uaddr)
 		handle(err)
 		defer conn.Close()
-		udpServer(*conn)
+		udpServer(*conn, crypto)
 	} else {
 		proto = "tcp4"
 		listener, err := net.Listen(proto, addr)
@@ -83,17 +84,19 @@ func server(args []string, udp, vb bool) {
 		conn, err := listener.Accept()
 		handle(err)
 		defer conn.Close()
-		base(conn)
+		base(conn, crypto)
 	}
 }
 
 // base works for TCP client and server, as well as UDP client
-func base(conn net.Conn) {
-	// let's do some crypto!
-	key := []byte("example key 1234")
-	iv := []byte("1234567890abcdef")
+func base(conn net.Conn, crypto bool) {
 	var stream cipher.Stream
-	stream = CTRMode(key, iv)
+	if crypto {
+		// let's do some crypto!
+		key := []byte("example key 1234")
+		iv := []byte("1234567890abcdef")
+		stream = CTRMode(key, iv)
+	}
 	// and let's do some networking
 	connbuf := bufio.NewReader(conn)
 	connwr := bufio.NewWriter(conn)
@@ -105,11 +108,14 @@ func base(conn net.Conn) {
 			// using bytes for non-string data support
 			txt, err := psRead.ReadBytes('\n')
 			handle(err)
-			// perform encryption and encode for transmission
-			txt = doMath(stream, txt)
-			enc := hex.EncodeToString(txt)
-			enc = fmt.Sprintf("%s\n", enc)
-			connwr.Write([]byte(enc))
+			if crypto {
+				// perform encryption and encode for transmission
+				txt = doMath(stream, txt)
+				enc := hex.EncodeToString(txt)
+				// add the newline bytewise
+				txt = append([]byte(enc), 10)
+			}
+			connwr.Write(txt)
 			connwr.Flush()
 		}
 	}()
@@ -121,11 +127,13 @@ func base(conn net.Conn) {
 			// can also use ReadSlice to get a []byte
 			txt, err := connbuf.ReadBytes('\n')
 			handle(err)
-			// reverse encoding and remove extra newline
-			dec, err := hex.DecodeString(string(txt[:len(txt)-1]))
-			dec = doMath(stream, dec)
-			handle(err)
-			psWrite.Write(dec)
+			if crypto {
+				// reverse encoding and remove extra newline
+				dec, err := hex.DecodeString(string(txt[:len(txt)-1]))
+				handle(err)
+				txt = doMath(stream, dec)
+			}
+			psWrite.Write(txt)
 			psWrite.Flush()
 		}
 	}()
@@ -134,15 +142,28 @@ func base(conn net.Conn) {
 }
 
 // udpServer fufills the special requirements of UDP connectionlessness
-func udpServer(conn net.UDPConn) {
+func udpServer(conn net.UDPConn, crypto bool) {
+	var stream cipher.Stream
+	if crypto {
+		// let's do some crypto!
+		key := []byte("example key 1234")
+		iv := []byte("1234567890abcdef")
+		stream = CTRMode(key, iv)
+	}
 	psRead := bufio.NewReader(os.Stdin)
 	psWrite := bufio.NewWriter(os.Stdout)
 	haveClient := false
 	// start our reader
 	for {
+		// we need to be able to read more at some point
 		b := make([]byte, 1024)
-		_, c, e := conn.ReadFromUDP(b)
+		n, c, e := conn.ReadFromUDP(b)
 		handle(e)
+		if crypto {
+			dec, err := hex.DecodeString(string(b[:n-1]))
+			handle(err)
+			b = doMath(stream, dec)
+		}
 		psWrite.Write(b)
 		psWrite.Flush()
 		// run once, start writting routine
@@ -152,6 +173,12 @@ func udpServer(conn net.UDPConn) {
 				for {
 					txt, err := psRead.ReadBytes('\n')
 					handle(err)
+					if crypto {
+						txt = doMath(stream, txt)
+						enc := hex.EncodeToString(txt)
+						// append byte-wise newline
+						txt = append([]byte(enc), 10)
+					}
 					conn.WriteMsgUDP(txt, nil, c)
 				}
 			}(c)
