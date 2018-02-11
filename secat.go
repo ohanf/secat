@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -89,10 +90,10 @@ func server(args []string, udp, vb bool) {
 // base works for TCP client and server, as well as UDP client
 func base(conn net.Conn) {
 	// let's do some crypto!
-	//key := []byte("example key 1234")
-	//iv := []byte("1234567890abcdef")
-	//var stream cipher.Stream
-	//stream = CTRMode(key, iv)
+	key := []byte("example key 1234")
+	iv := []byte("1234567890abcdef")
+	var stream cipher.Stream
+	stream = CTRMode(key, iv)
 	// and let's do some networking
 	connbuf := bufio.NewReader(conn)
 	connwr := bufio.NewWriter(conn)
@@ -104,7 +105,11 @@ func base(conn net.Conn) {
 			// using bytes for non-string data support
 			txt, err := psRead.ReadBytes('\n')
 			handle(err)
-			connwr.Write(txt)
+			// perform encryption and encode for transmission
+			txt = doMath(stream, txt)
+			enc := hex.EncodeToString(txt)
+			enc = fmt.Sprintf("%s\n", enc)
+			connwr.Write([]byte(enc))
 			connwr.Flush()
 		}
 	}()
@@ -116,7 +121,11 @@ func base(conn net.Conn) {
 			// can also use ReadSlice to get a []byte
 			txt, err := connbuf.ReadBytes('\n')
 			handle(err)
-			psWrite.Write(txt)
+			// reverse encoding and remove extra newline
+			dec, err := hex.DecodeString(string(txt[:len(txt)-1]))
+			dec = doMath(stream, dec)
+			handle(err)
+			psWrite.Write(dec)
 			psWrite.Flush()
 		}
 	}()
