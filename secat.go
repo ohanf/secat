@@ -15,11 +15,12 @@ import (
 	"os"
 )
 
-// the number of bits for our DHKE primes
-const bits = 128
+// the number of bits for our ECDH seed
+const bits = 256
 
+// main is the driver for the program, handles command line arguments
 func main() {
-	// remember this is a pointer
+	// remember these are pointers
 	var serv = flag.Bool("l", false, "enable server mode (listen)")
 	var verbose = flag.Bool("v", false, "verbose mode")
 	var udp = flag.Bool("u", false, "use UDP instead of TCP")
@@ -33,6 +34,7 @@ func main() {
 	}
 }
 
+// client builds the proper connection type and passes it to the base routine
 func client(args []string, udp, vb bool) {
 	if len(args) < 2 {
 		fmt.Printf("Error: No ports specified for connection\n")
@@ -55,6 +57,8 @@ func client(args []string, udp, vb bool) {
 	base(conn)
 }
 
+// server builds whichever protocol server we want
+// then passes to the proper handler
 func server(args []string, udp, vb bool) {
 	// maybe support random port generation someday
 	if len(args) < 1 {
@@ -93,10 +97,10 @@ func base(conn net.Conn) {
 	// anonymous routine for sending data
 	go func() {
 		for {
-			txt, err := psRead.ReadString('\n')
+			// using bytes for non-string data support
+			txt, err := psRead.ReadBytes('\n')
 			handle(err)
-			// can also use Write to write []byte
-			connwr.WriteString(txt)
+			connwr.Write(txt)
 			connwr.Flush()
 		}
 	}()
@@ -106,12 +110,10 @@ func base(conn net.Conn) {
 	go func() {
 		for {
 			// can also use ReadSlice to get a []byte
-			str, err := connbuf.ReadString('\n')
-			if len(str) > 0 {
-				psWrite.WriteString(str)
-				psWrite.Flush()
-			}
+			txt, err := connbuf.ReadBytes('\n')
 			handle(err)
+			psWrite.Write(txt)
+			psWrite.Flush()
 		}
 	}()
 	// ghetto block for connection to end
@@ -127,17 +129,17 @@ func udpServer(conn net.UDPConn) {
 	for {
 		b := make([]byte, 1024)
 		_, c, e := conn.ReadFromUDP(b)
-		// send the address read from to the send routine
 		handle(e)
-		psWrite.WriteString(string(b))
+		psWrite.Write(b)
 		psWrite.Flush()
 		// run once, start writting routine
 		if !haveClient {
+			// send the address read from to the send routine
 			go func(cl *net.UDPAddr) {
 				for {
-					txt, err := psRead.ReadString('\n')
+					txt, err := psRead.ReadBytes('\n')
 					handle(err)
-					conn.WriteMsgUDP([]byte(txt), nil, c)
+					conn.WriteMsgUDP(txt, nil, c)
 				}
 			}(c)
 			haveClient = true
