@@ -5,10 +5,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/hex"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"math/big"
 	"net"
@@ -90,6 +88,12 @@ func server(args []string, udp, vb bool) {
 
 // base works for TCP client and server, as well as UDP client
 func base(conn net.Conn) {
+	// let's do some crypto!
+	//key := []byte("example key 1234")
+	//iv := []byte("1234567890abcdef")
+	//var stream cipher.Stream
+	//stream = CTRMode(key, iv)
+	// and let's do some networking
 	connbuf := bufio.NewReader(conn)
 	connwr := bufio.NewWriter(conn)
 	psRead := bufio.NewReader(os.Stdin)
@@ -166,10 +170,7 @@ func cryptoSetup() {
 //   on the given data streams
 //   inspired from https://golang.org/src/crypto/cipher/example_test.go
 //
-func CTRMode() {
-	key := []byte("example key 1234")
-	plaintext := []byte("some plaintext")
-
+func CTRMode(key, iv []byte) cipher.Stream {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		panic(err)
@@ -177,29 +178,22 @@ func CTRMode() {
 
 	// The IV needs to be unique, but not secure. Therefore it's common to
 	// include it at the beginning of the ciphertext.
-	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
-	iv := ciphertext[:aes.BlockSize]
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		panic(err)
-	}
+	// We aren't doing that, instead since we control both client and server
+	// we are just going to set it in the source
+	return cipher.NewCTR(block, iv)
+}
 
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
-	fmt.Printf("%v\n", hex.EncodeToString(ciphertext[aes.BlockSize:]))
+// doMath performs the actual en/decryption
+// It's important to remember that ciphertexts must be authenticated
+// (i.e. by using crypto/hmac) as well as being encrypted in order to
+// be secure.
 
-	// It's important to remember that ciphertexts must be authenticated
-	// (i.e. by using crypto/hmac) as well as being encrypted in order to
-	// be secure.
-
-	// CTR mode is the same for both encryption and decryption, so we can
-	// also decrypt that ciphertext with NewCTR.
-
-	plaintext2 := make([]byte, len(plaintext))
-	stream = cipher.NewCTR(block, iv)
-	stream.XORKeyStream(plaintext2, ciphertext[aes.BlockSize:])
-
-	fmt.Printf("%s\n", plaintext2)
-	// Output: some plaintext
+// CTR mode is the same for both encryption and decryption, so we can
+// also decrypt that ciphertext with NewCTR.
+func doMath(stream cipher.Stream, old []byte) []byte {
+	new := make([]byte, len(old))
+	stream.XORKeyStream(new, old)
+	return new
 }
 
 /* genDH generates the public base and modulus for DHKE */
