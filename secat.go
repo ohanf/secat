@@ -29,8 +29,7 @@ func main() {
 	args := flag.Args()
 	/* end argument parsing */
 	if len(*psk) != 16 && len(*psk) != 24 && len(*psk) != 32 {
-		fmt.Fprintf(os.Stderr, "Invalid key length\n")
-		os.Exit(1)
+		log.Fatal("Invalid key length\n")
 	}
 	if *serv {
 		server(args, *udp, *crypto, *verbose, *psk)
@@ -42,8 +41,7 @@ func main() {
 // client builds the proper connection type and passes it to the base routine
 func client(args []string, udp, crypto, vb bool, psk string) {
 	if len(args) < 2 {
-		fmt.Printf("Error: No ports specified for connection\n")
-		os.Exit(1)
+		log.Fatal("Error: No ports specified for connection\n")
 	}
 	// force IPv4 for now
 	var proto string
@@ -52,12 +50,13 @@ func client(args []string, udp, crypto, vb bool, psk string) {
 	} else {
 		proto = "tcp4"
 	}
+	// quick and dirty construction of our network address
 	addr := fmt.Sprintf("%s:%s", args[0], args[1])
 	conn, err := net.Dial(proto, addr)
 	handle(err)
 	defer conn.Close()
 	if vb {
-		fmt.Println("starting client")
+		log.Printf("Connected to %v\n", conn.RemoteAddr())
 	}
 	base(conn, crypto, psk)
 }
@@ -67,8 +66,7 @@ func client(args []string, udp, crypto, vb bool, psk string) {
 func server(args []string, udp, crypto, vb bool, psk string) {
 	// maybe support random port generation someday
 	if len(args) < 1 {
-		fmt.Printf("Error: No listen port specified\n")
-		os.Exit(1)
+		log.Fatal("Error: No listen port specified\n")
 	}
 	// going to stick with IPv4 for now
 	var proto string
@@ -80,15 +78,24 @@ func server(args []string, udp, crypto, vb bool, psk string) {
 		conn, err := net.ListenUDP(proto, uaddr)
 		handle(err)
 		defer conn.Close()
-		udpServer(*conn, crypto, psk)
+		if vb {
+			log.Printf("Listening on %v", conn.LocalAddr())
+		}
+		udpServer(*conn, crypto, vb, psk)
 	} else {
 		proto = "tcp4"
 		listener, err := net.Listen(proto, addr)
 		handle(err)
 		defer listener.Close()
+		if vb {
+			log.Printf("Listening on %v", listener.Addr())
+		}
 		conn, err := listener.Accept()
 		handle(err)
 		defer conn.Close()
+		if vb {
+			log.Printf("Connection from %v\n", conn.RemoteAddr())
+		}
 		base(conn, crypto, psk)
 	}
 }
@@ -147,7 +154,7 @@ func base(conn net.Conn, crypto bool, psk string) {
 }
 
 // udpServer fufills the special requirements of UDP connectionlessness
-func udpServer(conn net.UDPConn, crypto bool, psk string) {
+func udpServer(conn net.UDPConn, crypto, vb bool, psk string) {
 	var stream cipher.Stream
 	if crypto {
 		// let's do some crypto!
@@ -164,6 +171,9 @@ func udpServer(conn net.UDPConn, crypto bool, psk string) {
 		b := make([]byte, 1024)
 		n, c, e := conn.ReadFromUDP(b)
 		handle(e)
+		if vb {
+			log.Printf("Connection from %v\n", c)
+		}
 		if crypto {
 			dec, err := hex.DecodeString(string(b[:n-1]))
 			handle(err)
@@ -203,7 +213,7 @@ func cryptoSetup() {
 	secKey.Exp(ourPrime, myPrime, ourMod)
 	// we will want to call secKey.Bytes for use as AES key later
 	// debug
-	fmt.Printf("debug: %v %v %v %v\n", myPrime, ourPrime, ourMod, secKey.BitLen())
+	log.Printf("%v %v %v %v\n", myPrime, ourPrime, ourMod, secKey.BitLen())
 
 }
 
