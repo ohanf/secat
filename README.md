@@ -1,6 +1,6 @@
 # secat
 
-Security Enhanced netcAT is a learning experience to build a better version of [cryptcat](http://cryptcat.sourceforge.net/) and/or [netcat](http://nc110.sourceforge.net/)
+Security Enhanced netCAT is a learning experience to build a better version of [cryptcat](http://cryptcat.sourceforge.net/) and/or [netcat](http://nc110.sourceforge.net/)
 
 ## Goals
  - Fully compatible with "standard" netcat

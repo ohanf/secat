@@ -24,18 +24,23 @@ func main() {
 	var verbose = flag.Bool("v", false, "verbose mode")
 	var udp = flag.Bool("u", false, "use UDP instead of TCP")
 	var crypto = flag.Bool("c", false, "enable encryption")
+	var psk = flag.String("psk", "example key 1234", "preshared key for encryption")
 	flag.Parse()
 	args := flag.Args()
 	/* end argument parsing */
+	if len(*psk) != 16 && len(*psk) != 24 && len(*psk) != 32 {
+		fmt.Fprintf(os.Stderr, "Invalid key length\n")
+		os.Exit(1)
+	}
 	if *serv {
-		server(args, *udp, *crypto, *verbose)
+		server(args, *udp, *crypto, *verbose, *psk)
 	} else {
-		client(args, *udp, *crypto, *verbose)
+		client(args, *udp, *crypto, *verbose, *psk)
 	}
 }
 
 // client builds the proper connection type and passes it to the base routine
-func client(args []string, udp, crypto, vb bool) {
+func client(args []string, udp, crypto, vb bool, psk string) {
 	if len(args) < 2 {
 		fmt.Printf("Error: No ports specified for connection\n")
 		os.Exit(1)
@@ -54,12 +59,12 @@ func client(args []string, udp, crypto, vb bool) {
 	if vb {
 		fmt.Println("starting client")
 	}
-	base(conn, crypto)
+	base(conn, crypto, psk)
 }
 
 // server builds whichever protocol server we want
 // then passes to the proper handler
-func server(args []string, udp, crypto, vb bool) {
+func server(args []string, udp, crypto, vb bool, psk string) {
 	// maybe support random port generation someday
 	if len(args) < 1 {
 		fmt.Printf("Error: No listen port specified\n")
@@ -75,7 +80,7 @@ func server(args []string, udp, crypto, vb bool) {
 		conn, err := net.ListenUDP(proto, uaddr)
 		handle(err)
 		defer conn.Close()
-		udpServer(*conn, crypto)
+		udpServer(*conn, crypto, psk)
 	} else {
 		proto = "tcp4"
 		listener, err := net.Listen(proto, addr)
@@ -84,16 +89,16 @@ func server(args []string, udp, crypto, vb bool) {
 		conn, err := listener.Accept()
 		handle(err)
 		defer conn.Close()
-		base(conn, crypto)
+		base(conn, crypto, psk)
 	}
 }
 
 // base works for TCP client and server, as well as UDP client
-func base(conn net.Conn, crypto bool) {
+func base(conn net.Conn, crypto bool, psk string) {
 	var stream cipher.Stream
 	if crypto {
 		// let's do some crypto!
-		key := []byte("example key 1234")
+		key := []byte(psk)
 		iv := []byte("1234567890abcdef")
 		stream = CTRMode(key, iv)
 	}
@@ -142,11 +147,11 @@ func base(conn net.Conn, crypto bool) {
 }
 
 // udpServer fufills the special requirements of UDP connectionlessness
-func udpServer(conn net.UDPConn, crypto bool) {
+func udpServer(conn net.UDPConn, crypto bool, psk string) {
 	var stream cipher.Stream
 	if crypto {
 		// let's do some crypto!
-		key := []byte("example key 1234")
+		key := []byte(psk)
 		iv := []byte("1234567890abcdef")
 		stream = CTRMode(key, iv)
 	}
