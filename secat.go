@@ -9,9 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/big"
 	"net"
 	"os"
+
+	curve "golang.org/x/crypto/curve25519"
 )
 
 // the number of bits for our ECDH seed
@@ -25,9 +26,14 @@ func main() {
 	var udp = flag.Bool("u", false, "use UDP instead of TCP")
 	var crypto = flag.Bool("c", false, "enable encryption")
 	var psk = flag.String("psk", "example key 1234", "preshared key for encryption")
+	var h = flag.Bool("h", false, "help / debug")
 	flag.Parse()
 	args := flag.Args()
 	/* end argument parsing */
+	if *h {
+		test()
+		os.Exit(0)
+	}
 	if len(*psk) != 16 && len(*psk) != 24 && len(*psk) != 32 {
 		log.Fatal("Invalid key length\n")
 	}
@@ -202,21 +208,6 @@ func udpServer(conn net.UDPConn, crypto, vb bool, psk string) {
 	}
 }
 
-func cryptoSetup() {
-	// define our prime for dhke
-	myPrime, err := rand.Prime(rand.Reader, bits)
-	handle(err)
-	// get the public data to send to server
-	ourPrime, ourMod := genDH()
-	// compute the secret key for use with aes
-	secKey := big.NewInt(0)
-	secKey.Exp(ourPrime, myPrime, ourMod)
-	// we will want to call secKey.Bytes for use as AES key later
-	// debug
-	log.Printf("%v %v %v %v\n", myPrime, ourPrime, ourMod, secKey.BitLen())
-
-}
-
 // CTRMode implements the counter mode for AES encryption/decryption
 //   on the given data streams
 //   inspired from https://golang.org/src/crypto/cipher/example_test.go
@@ -247,15 +238,38 @@ func doMath(stream cipher.Stream, old []byte) []byte {
 	return new
 }
 
-/* genDH generates the public base and modulus for DHKE */
-func genDH() (*big.Int, *big.Int) {
-	// define the public base prime
-	ourPrime, err := rand.Prime(rand.Reader, bits)
+func test() {
+	myPub, myPriv := makePubPriv()
+	hisPub, hisPriv := makePubPriv()
+	key1 := calcShared(myPub, hisPriv)
+	key2 := calcShared(hisPub, myPriv)
+	fmt.Printf("keys the same? %v\n", key1 == key2)
+}
+
+/* calcShared calculates a shared secret using curve25519 */
+func calcShared(pub, priv [32]byte) [32]byte {
+	var shared [32]byte
+	curve.ScalarMult(&shared, &priv, &pub)
+	return shared
+}
+
+/* makePubPriv creates public and private keys for curve25519 */
+func makePubPriv() ([32]byte, [32]byte) {
+	// generate a 32-byte Curve25519 secret key, start by generating 32 secret
+	// random bytes from a cryptographically safe source
+	myPrime, err := rand.Prime(rand.Reader, bits)
 	handle(err)
-	// define the public modulus
-	ourMod, err := rand.Prime(rand.Reader, bits)
-	handle(err)
-	return ourPrime, ourMod
+	mine := myPrime.Bytes()
+	// then add security with bit modifications
+	//fmt.Println(mine)
+	mine[0] &= 248
+	mine[31] &= 127
+	mine[31] |= 64
+	var prv [32]byte
+	copy(prv[:], mine)
+	var pub [32]byte
+	curve.ScalarBaseMult(&pub, &prv)
+	return pub, prv
 }
 
 /* generic error handler */
