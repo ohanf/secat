@@ -24,18 +24,21 @@ func main() {
 	var serv = flag.Bool("l", false, "enable server mode (listen)")
 	var verbose = flag.Bool("v", false, "verbose mode")
 	var udp = flag.Bool("u", false, "use UDP instead of TCP")
-	var crypto = flag.Bool("c", false, "enable encryption")
-	var psk = flag.String("psk", "", "preshared key for encryption")
-	var h = flag.Bool("h", false, "help / debug")
+	var crypto = flag.Bool("c", false, "enable encryption (ECDHKE by default)")
+	var psk = flag.String("psk", "", "use given preshared key for encryption")
+	var h = flag.Bool("h", false, "This help message")
 	flag.Parse()
 	args := flag.Args()
 	/* end argument parsing */
 	if *h {
-		test()
+		flag.Usage()
 		os.Exit(0)
 	}
 	if *psk != "" && len(*psk) != 16 && len(*psk) != 24 && len(*psk) != 32 {
 		log.Fatal("Invalid key length\n")
+	}
+	if *crypto && *psk == "" && *udp {
+		log.Fatal("DHKE not supported in UDP mode")
 	}
 	if *serv {
 		server(args, *udp, *crypto, *verbose, *psk)
@@ -64,7 +67,7 @@ func client(args []string, udp, crypto, vb bool, psk string) {
 	if vb {
 		log.Printf("Connected to %v\n", conn.RemoteAddr())
 	}
-	base(conn, crypto, psk)
+	base(conn, crypto, vb, psk)
 }
 
 // server builds whichever protocol server we want
@@ -102,18 +105,21 @@ func server(args []string, udp, crypto, vb bool, psk string) {
 		if vb {
 			log.Printf("Connection from %v\n", conn.RemoteAddr())
 		}
-		base(conn, crypto, psk)
+		base(conn, crypto, vb, psk)
 	}
 }
 
 // base works for TCP client and server, as well as UDP client
-func base(conn net.Conn, crypto bool, psk string) {
+func base(conn net.Conn, crypto, vb bool, psk string) {
 	var stream cipher.Stream
 	iv := []byte("1234567890abcdef")
 	if crypto && psk != "" {
 		// let's do some crypto!
 		key := []byte(psk)
 		stream = CTRMode(key, iv)
+		if vb {
+			log.Println("built stream for PSK")
+		}
 	}
 	firstRead := true
 	firstWrite := true
@@ -141,7 +147,7 @@ func base(conn net.Conn, crypto bool, psk string) {
 			}
 			// if we are just starting a connection and want dhke send the
 			// key before anything else happens
-			if crypto && firstWrite {
+			if crypto && firstWrite && stream == nil {
 				// send hex encoded public key (with a newline)
 				enc := hex.EncodeToString(pubKey[:])
 				txt = append([]byte(enc), 10)
@@ -180,16 +186,21 @@ func base(conn net.Conn, crypto bool, psk string) {
 				// reverse encoding and remove extra newline
 				dec, err := hex.DecodeString(string(txt[:len(txt)-1]))
 				handle(err)
-				if firstRead {
+				if firstRead && stream == nil {
 					// change the type
 					var theirPub [32]byte
 					copy(theirPub[:], dec)
 					// calculate the shared key
 					key = calcShared(theirPub, privKey)
+					// send it to the writer so it knows how to encrypt
 					sharedKey <- key
 					firstRead = false
 					stream = CTRMode(key[:], iv)
-					txt = []byte("secure connection established\n")
+					// don't write anything on key exchange
+					txt = []byte("\x00")
+					if vb {
+						log.Printf("built stream for DHKE")
+					}
 				} else if stream != nil {
 					txt = doMath(stream, dec)
 				}
@@ -210,6 +221,9 @@ func udpServer(conn net.UDPConn, crypto, vb bool, psk string) {
 		key := []byte(psk)
 		iv := []byte("1234567890abcdef")
 		stream = CTRMode(key, iv)
+		if vb {
+			log.Println("built stream for PSK")
+		}
 	}
 	psRead := bufio.NewReader(os.Stdin)
 	psWrite := bufio.NewWriter(os.Stdout)
@@ -254,7 +268,8 @@ func udpServer(conn net.UDPConn, crypto, vb bool, psk string) {
 // CTRMode implements the counter mode for AES encryption/decryption
 //   on the given data streams
 //   inspired from https://golang.org/src/crypto/cipher/example_test.go
-//
+// CTR mode is the same for both encryption and decryption, so we can
+// also decrypt that ciphertext with NewCTR.
 func CTRMode(key, iv []byte) cipher.Stream {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -273,20 +288,10 @@ func CTRMode(key, iv []byte) cipher.Stream {
 // (i.e. by using crypto/hmac) as well as being encrypted in order to
 // be secure.
 
-// CTR mode is the same for both encryption and decryption, so we can
-// also decrypt that ciphertext with NewCTR.
 func doMath(stream cipher.Stream, old []byte) []byte {
 	new := make([]byte, len(old))
 	stream.XORKeyStream(new, old)
 	return new
-}
-
-func test() {
-	myPub, myPriv := makePubPriv()
-	hisPub, hisPriv := makePubPriv()
-	key1 := calcShared(myPub, hisPriv)
-	key2 := calcShared(hisPub, myPriv)
-	fmt.Printf("keys the same? %v\n", key1 == key2)
 }
 
 /* calcShared calculates a shared secret using curve25519 */
