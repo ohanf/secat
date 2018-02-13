@@ -25,7 +25,7 @@ func main() {
 	var verbose = flag.Bool("v", false, "verbose mode")
 	var udp = flag.Bool("u", false, "use UDP instead of TCP")
 	var crypto = flag.Bool("c", false, "enable encryption")
-	var psk = flag.String("psk", "example key 1234", "preshared key for encryption")
+	var psk = flag.String("psk", "", "preshared key for encryption")
 	var h = flag.Bool("h", false, "help / debug")
 	flag.Parse()
 	args := flag.Args()
@@ -34,7 +34,7 @@ func main() {
 		test()
 		os.Exit(0)
 	}
-	if len(*psk) != 16 && len(*psk) != 24 && len(*psk) != 32 {
+	if *psk != "" && len(*psk) != 16 && len(*psk) != 24 && len(*psk) != 32 {
 		log.Fatal("Invalid key length\n")
 	}
 	if *serv {
@@ -109,12 +109,16 @@ func server(args []string, udp, crypto, vb bool, psk string) {
 // base works for TCP client and server, as well as UDP client
 func base(conn net.Conn, crypto bool, psk string) {
 	var stream cipher.Stream
-	if crypto {
+	iv := []byte("1234567890abcdef")
+	if crypto && psk != "" {
 		// let's do some crypto!
 		key := []byte(psk)
-		iv := []byte("1234567890abcdef")
 		stream = CTRMode(key, iv)
 	}
+	firstRead := true
+	firstWrite := true
+	pubKey, privKey := makePubPriv()
+	sharedKey := make(chan [32]byte)
 	// and let's do some networking
 	connbuf := bufio.NewReader(conn)
 	connwr := bufio.NewWriter(conn)
@@ -122,25 +126,52 @@ func base(conn net.Conn, crypto bool, psk string) {
 	psWrite := bufio.NewWriter(os.Stdout)
 	// anonymous routine for sending data
 	go func() {
+		// not sure why this didn't work at the bottom of the loop
+		// but it work here, plus it feels like Javascript :)
+		send := func(wr *bufio.Writer, d []byte) {
+			wr.Write(d)
+			wr.Flush()
+		}
 		for {
-			// using bytes for non-string data support
-			txt, err := psRead.ReadBytes('\n')
-			handle(err)
-			if crypto {
-				// perform encryption and encode for transmission
-				txt = doMath(stream, txt)
-				enc := hex.EncodeToString(txt)
-				// add the newline bytewise
-				txt = append([]byte(enc), 10)
+			var txt []byte
+			// if we want crypto but have no PSK, wait for the shared key
+			if crypto && psk == "" && !firstWrite && stream == nil {
+				key := <-sharedKey
+				stream = CTRMode(key[:], iv)
 			}
-			connwr.Write(txt)
-			connwr.Flush()
+			// if we are just starting a connection and want dhke send the
+			// key before anything else happens
+			if crypto && firstWrite {
+				// send hex encoded public key (with a newline)
+				enc := hex.EncodeToString(pubKey[:])
+				txt = append([]byte(enc), 10)
+				firstWrite = false
+				// else we are just doing normal communication
+				send(connwr, txt)
+			} else {
+				// using bytes for non-string data support
+				txt, err := psRead.ReadBytes('\n')
+				handle(err)
+				if crypto {
+					// perform encryption and encode for transmission
+					txt = doMath(stream, txt)
+					enc := hex.EncodeToString(txt)
+					// add the newline bytewise
+					txt = append([]byte(enc), 10)
+				}
+				send(connwr, txt)
+			}
+			// for reasons unknown, txt failed to retain value here
+			// after the DHKE implementation was added
+			//connwr.Write(txt)
+			//connwr.Flush()
 		}
 	}()
 
 	kill := make(chan bool)
 	// anonymous routine for reading data
 	go func() {
+		var key [32]byte
 		for {
 			// can also use ReadSlice to get a []byte
 			txt, err := connbuf.ReadBytes('\n')
@@ -149,7 +180,19 @@ func base(conn net.Conn, crypto bool, psk string) {
 				// reverse encoding and remove extra newline
 				dec, err := hex.DecodeString(string(txt[:len(txt)-1]))
 				handle(err)
-				txt = doMath(stream, dec)
+				if firstRead {
+					// change the type
+					var theirPub [32]byte
+					copy(theirPub[:], dec)
+					// calculate the shared key
+					key = calcShared(theirPub, privKey)
+					sharedKey <- key
+					firstRead = false
+					stream = CTRMode(key[:], iv)
+					txt = []byte("secure connection established\n")
+				} else if stream != nil {
+					txt = doMath(stream, dec)
+				}
 			}
 			psWrite.Write(txt)
 			psWrite.Flush()
@@ -162,7 +205,7 @@ func base(conn net.Conn, crypto bool, psk string) {
 // udpServer fufills the special requirements of UDP connectionlessness
 func udpServer(conn net.UDPConn, crypto, vb bool, psk string) {
 	var stream cipher.Stream
-	if crypto {
+	if crypto && psk != "" {
 		// let's do some crypto!
 		key := []byte(psk)
 		iv := []byte("1234567890abcdef")
