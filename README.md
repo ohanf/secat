@@ -25,5 +25,27 @@ Security Enhanced netCAT is a learning experience to build a better version of [
  - AES-256 with (automatic) ECDHE in TCP mode only
    - pass just the `-c` flag
 
+## Usage
+```
+Usage of ./secat:
+  -c    enable encryption (ECDHKE by default)
+  -h    This help message
+  -l    enable server mode (listen)
+  -psk string
+        use given preshared key for encryption
+  -u    use UDP instead of TCP
+  -v    verbose mode
+ ```
+
+ ## Build
+  - As with any `golang` program all you should have to do is `go build secat.go` followed by `./secat <options>`
+
+ - Alternitively one use `go run secat.go <options>` in a development environment
+
+ - Note: This utility was built on (Arch) Linux and has no compatibily promises. However, it should work on most Linux based systems
+
 ## Pull Requests and Issues
 Both are welcome :)
+
+## Contact
+Questions about the project or just want to say hi? Reach out to me on [keybase](https://keybase.io/ohan) and mention `secat`!
