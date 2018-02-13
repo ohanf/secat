@@ -39,6 +39,7 @@ Usage of ./secat:
 
  ## Build
   - As with any `golang` program all you should have to do is `go build secat.go` followed by `./secat <options>`
+    - May need to install the crypto subrepo package curve25519: `go get golang.org/x/crypto/curve25519`
 
  - Alternitively one use `go run secat.go <options>` in a development environment
 
