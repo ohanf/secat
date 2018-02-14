@@ -139,7 +139,7 @@ func base(conn net.Conn, crypto, vb bool, psk string) {
 			wr.Flush()
 		}
 		for {
-			var txt []byte
+			txt := make([]byte, 1024)
 			// if we want crypto but have no PSK, wait for the shared key
 			if crypto && psk == "" && !firstWrite && stream == nil {
 				key := <-sharedKey
@@ -148,24 +148,23 @@ func base(conn net.Conn, crypto, vb bool, psk string) {
 			// if we are just starting a connection and want dhke send the
 			// key before anything else happens
 			if crypto && firstWrite && stream == nil {
-				// send hex encoded public key (with a newline)
-				enc := hex.EncodeToString(pubKey[:])
-				txt = append([]byte(enc), 10)
+				// send hex encoded public key
+				txt = []byte(hex.EncodeToString(pubKey[:]))
 				firstWrite = false
 				// else we are just doing normal communication
 				send(connwr, txt)
 			} else {
 				// using bytes for non-string data support
-				txt, err := psRead.ReadBytes('\n')
+				n, err := psRead.Read(txt)
 				handle(err)
 				if crypto {
 					// perform encryption and encode for transmission
-					txt = doMath(stream, txt)
-					enc := hex.EncodeToString(txt)
-					// add the newline bytewise
-					txt = append([]byte(enc), 10)
+					txt = doMath(stream, txt[:n])
+					txt = []byte(hex.EncodeToString(txt))
+					// need to change n because read lenght != decoded/decrypted length
+					n = len(txt)
 				}
-				send(connwr, txt)
+				send(connwr, txt[:n])
 			}
 			// for reasons unknown, txt failed to retain value here
 			// after the DHKE implementation was added
@@ -179,13 +178,15 @@ func base(conn net.Conn, crypto, vb bool, psk string) {
 	go func() {
 		var key [32]byte
 		for {
+			txt := make([]byte, 1024)
 			// can also use ReadSlice to get a []byte
-			txt, err := connbuf.ReadBytes('\n')
+			n, err := connbuf.Read(txt)
 			handle(err)
 			if crypto {
-				// reverse encoding and remove extra newline
-				dec, err := hex.DecodeString(string(txt[:len(txt)-1]))
+				// reverse encoding
+				dec, err := hex.DecodeString(string(txt[:n]))
 				handle(err)
+				n = len(dec)
 				if firstRead && stream == nil {
 					// change the type
 					var theirPub [32]byte
@@ -198,6 +199,7 @@ func base(conn net.Conn, crypto, vb bool, psk string) {
 					stream = CTRMode(key[:], iv)
 					// don't write anything on key exchange
 					txt = []byte("\x00")
+					n = 1
 					if vb {
 						log.Printf("built stream for DHKE")
 					}
@@ -205,7 +207,7 @@ func base(conn net.Conn, crypto, vb bool, psk string) {
 					txt = doMath(stream, dec)
 				}
 			}
-			psWrite.Write(txt)
+			psWrite.Write(txt[:n])
 			psWrite.Flush()
 		}
 	}()
